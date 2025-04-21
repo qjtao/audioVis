@@ -42,8 +42,8 @@
             <label><input type="checkbox" id="toggleParticles" checked> 粒子环</label>
             <label><input type="checkbox" id="toggleSphere" checked> 动态球体</label>
             <label><input type="checkbox" id="toggleSphere2" checked> 动态球体2</label>
-            <label><input type="checkbox" id="toggleBurst" checked> 粒子喷发</label>
-            <label><input type="checkbox" id="toggleMultiSpheres" checked> 多层球体</label>
+            <label><input type="checkbox" id="toggleBurst" disabled checked> 粒子喷发</label>
+            <label><input type="checkbox" id="toggleMultiSpheres" disabled checked> 多层球体</label>
             <label><input type="checkbox" id="togglePulse" checked> 脉冲特效</label>
         </div>
     </div>
@@ -310,14 +310,15 @@
                     sphere2Material.emissive.setHSL(0.6 + maxFreq * 0.3, 1, 0.4 + maxFreq * 0.3);
                 }
             }
-            // // 粒子喷发
-            // if (burstParticles) burstParticles.visible = showBurst;
-            // // 多层球体
-            // if (multiSpheres && multiSpheres.length) {
-            //     for (let l = 0; l < multiSpheres.length; l++) {
-            //         multiSpheres[l].mesh.visible = showMultiSpheres;
-            //     }
-            // }
+            // 粒子喷发
+            if (burstParticles) burstParticles.visible = showBurst;
+            // 你还需要确保 burstParticles 已经初始化并加入 scene
+            // 以及有对应的动画更新逻辑
+            if (multiSpheres && multiSpheres.length) {
+                for (let l = 0; l < multiSpheres.length; l++) {
+                    multiSpheres[l].mesh.visible = showMultiSpheres;
+                }
+            }
             // 脉冲特效粒子发射与更新
             pulsePoints.visible = showPulse;
             if (showPulse) {
