@@ -45,6 +45,8 @@
             <label><input type="checkbox" id="toggleBurst" disabled checked> 粒子喷发</label>
             <label><input type="checkbox" id="toggleMultiSpheres" disabled checked> 多层球体</label>
             <label><input type="checkbox" id="togglePulse" checked> 脉冲特效</label>
+            <!-- 新增：激浪圆环控制 -->
+            <label><input type="checkbox" id="toggleRipple" checked> 激浪圆环</label>
         </div>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
@@ -75,6 +77,35 @@
         // 脉冲粒子
         let pulseParticles = [], pulseParticleGeometry, pulseParticleMaterial, pulsePoints;
         let pulseParticleCount = 400;
+        // 激浪特效参数
+        let rippleActive = false;
+        let rippleRadius = 0;
+        let rippleAlpha = 0;
+        let rippleMaxRadius = 0;
+        let rippleDecay = 0.06;
+        let lastEnergy = 0;
+        let rippleCooldown = 0;
+        // 激浪圆环对象
+        let rippleMesh;
+        // 新增：激浪圆环开关变量
+        let showRipple = true;
+
+        function createRippleMesh() {
+            // 宽度10，内半径38，外半径48
+            let geometry = new THREE.RingGeometry(47.5, 48, 128);
+            let material = new THREE.MeshBasicMaterial({
+                color: 0x58F2FB,
+                transparent: true,
+                opacity: 0.5,
+                side: THREE.DoubleSide,
+                depthWrite: false
+            });
+            rippleMesh = new THREE.Mesh(geometry, material);
+            rippleMesh.position.set(0, 0, 0.5);
+            scene.add(rippleMesh);
+            rippleMesh.visible = true; // 默认可见
+        }
+
         function initThree() {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
@@ -204,6 +235,9 @@
 
 
             window.addEventListener('resize', onWindowResize, false);
+            // 确保激浪圆环被创建
+            createRippleMesh();
+
         }
 
         function onWindowResize() {
@@ -373,6 +407,40 @@
                 pulseParticleGeometry.attributes.position.needsUpdate = true;
                 pulseParticleMaterial.color.setHSL(0.1 + maxFreq * 0.8, 1, 0.7);
             }
+            // 激浪圆环鼓点检测与动画
+            let sum = 0;
+            for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+            let audioEnergy = sum / dataArray.length / 10;// 音频能量
+            if (showRipple && rippleCooldown <= 0 && audioEnergy - lastEnergy > 0.13) {
+                rippleActive = true;// 激浪标志
+                rippleRadius = 48;// 初始半径
+                rippleMaxRadius = 60;// 最大半径
+                rippleAlpha = 0.85;// 初始透明度
+                rippleCooldown = 10;// 冷却时间
+                if (rippleMesh) rippleMesh.visible = true;
+            }
+            lastEnergy = audioEnergy;
+            if (rippleCooldown > 0) rippleCooldown--;
+
+            if (rippleActive && rippleMesh && showRipple) {
+                rippleMesh.scale.setScalar(rippleRadius / 48);// 鼓点大小
+                rippleMesh.material.opacity = rippleAlpha;
+                rippleRadius += 1;
+                rippleAlpha -= rippleDecay;
+                rippleMesh.material.color.setHSL(0.55, 0.95, 0.7 + 0.2 * Math.sin(Date.now() * 0.01));
+                if (rippleAlpha <= 0 || rippleRadius > rippleMaxRadius) {
+                    rippleActive = false;
+                }
+            } else if (rippleMesh && showRipple) {
+                // 鼓点动画结束后，保持原始大小和透明度
+                rippleMesh.visible = true;
+                rippleMesh.scale.setScalar(1);
+                rippleMesh.material.opacity = 0.5;
+                rippleMesh.material.color.set(0x58F2FB);
+            } else if (rippleMesh) {
+                rippleMesh.visible = false;
+            }
+
             renderer.render(scene, camera);
         }
 
@@ -418,6 +486,12 @@
 
         document.getElementById('togglePulse').onchange = function(e) {
             showPulse = e.target.checked;
+        };
+
+        // 新增：菜单激浪圆环开关
+        document.getElementById('toggleRipple').onchange = function(e) {
+            showRipple = e.target.checked;
+            if (!showRipple && rippleMesh) rippleMesh.visible = false;
         };
 
         initThree();
