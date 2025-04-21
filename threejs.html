@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Three.js 音频可视化</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #111; }
+        #upload { position: absolute; top: 10px; left: 10px; z-index: 10; }
+        /* 新增菜单样式 */
+        #menu {
+            position: fixed;
+            top: 40px;
+            left: 10px;
+            background: rgba(30,30,30,0.95);
+            color: #fff;
+            padding: 16px 20px 12px 20px;
+            border-radius: 8px;
+            z-index: 20;
+            min-width: 160px;
+            box-shadow: 0 2px 12px #0008;
+        }
+        #menu label { display: block; margin-bottom: 8px; cursor: pointer; }
+        #menu .toggle-btn {
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 18px;
+            cursor: pointer;
+            margin-bottom: 10px;
+            outline: none;
+        }
+        #menu .options { display: none; margin-top: 8px; }
+        #menu.expanded .options { display: block; }
+    </style>
+</head>
+<body>
+    <input type="file" id="upload" accept="audio/*">
+    <div id="menu" class="expanded">
+        <button class="toggle-btn" id="toggleMenu">☰ 特效菜单</button>
+        <div class="options">
+            <label><input type="checkbox" id="toggleBars" checked> 柱状体</label>
+            <label><input type="checkbox" id="toggleParticles" checked> 粒子环</label>
+            <label><input type="checkbox" id="toggleSphere" checked> 动态球体</label>
+            <label><input type="checkbox" id="toggleSphere2" checked> 动态球体2</label>
+            <label><input type="checkbox" id="toggleBurst" checked> 粒子喷发</label>
+            <label><input type="checkbox" id="toggleMultiSpheres" checked> 多层球体</label>
+            <label><input type="checkbox" id="togglePulse" checked> 脉冲特效</label>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+    <script>
+        let scene, camera, renderer, analyser, dataArray, bars = [];
+        let audioCtx, source, audio;
+
+        // 新增变量
+        let particles, particlePositions, particleMaterials = [];
+        let sphere, sphereGeometry;
+        let dynamicLight;
+        let barRingGroup;
+        let sphere2, sphere2Geometry, sphere2Material, sphere2Group;
+        // 新增：粒子喷发
+        let burstParticles, burstParticleGeometry, burstParticleMaterial, burstParticleVelocities = [];
+        // 新增：多层球体
+        let multiSpheres = [];
+        // 新增：脉冲参数
+        let pulseBaseRadius = 18, pulseStrength = 8;
+
+        // 新增：特效开关变量
+        let showBars = true, showParticles = true, showSphere = true;
+        let showSphere2 = true;
+        // 新增：粒子喷发、多层球体开关
+        let showBurst = true, showMultiSpheres = true;
+        // 新增：脉冲特效开关
+        let showPulse = true;
+        // 脉冲粒子
+        let pulseParticles = [], pulseParticleGeometry, pulseParticleMaterial, pulsePoints;
+        let pulseParticleCount = 400;
+        function initThree() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+            camera.position.z = 180;
+
+            renderer = new THREE.WebGLRenderer({antialias: true});
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // 新增：柱状体环形分组
+            barRingGroup = new THREE.Group();
+            scene.add(barRingGroup);
+
+            // 柱状体环形分布
+            let barCount = 64;
+            let barWidth = 1;
+            let barRadius = 50;
+            bars = [];
+            for (let i = 0; i < barCount; i++) {
+                let geometry = new THREE.BoxGeometry(barWidth, 1, barWidth);
+                let material = new THREE.MeshStandardMaterial({color: 0x00ff99});
+                let bar = new THREE.Mesh(geometry, material);
+
+                // 环形分布
+                let angle = (i / barCount) * Math.PI * 2;
+                bar.position.x = Math.cos(angle) * barRadius;
+                bar.position.z = Math.sin(angle) * barRadius;
+                bar.position.y = 0;
+
+                // 使柱状体朝外
+                bar.lookAt(0, 0, 0);
+
+                barRingGroup.add(bar);
+                bars.push(bar);
+            }
+
+            // 粒子系统（环形分布）
+            let particleCount = 256;
+            particlePositions = new Float32Array(particleCount * 3);
+            let radius = 70;
+            for (let i = 0; i < particleCount; i++) {
+                let angle = (i / particleCount) * Math.PI * 2;
+                particlePositions[i * 3] = Math.cos(angle) * radius;
+                particlePositions[i * 3 + 1] = Math.sin(angle) * radius;
+                particlePositions[i * 3 + 2] = 0;
+            }
+            let particleGeometry = new THREE.BufferGeometry();
+            particleGeometry.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+            let particleMaterial = new THREE.PointsMaterial({ 
+                color: 0x44aaff, 
+                size: 0.5, // 这里将粒子大小调小
+                transparent: true, 
+                opacity: 0.8 
+            });
+            particles = new THREE.Points(particleGeometry, particleMaterial);
+            scene.add(particles);
+
+            // 动态变形球体
+            sphereGeometry = new THREE.SphereGeometry(30, 64, 64);
+            let sphereMaterial = new THREE.MeshStandardMaterial({ color: 0xff00cc, wireframe: true, opacity: 0.5, transparent: true });
+            sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+            scene.add(sphere);
+
+            // 灯光
+            let light = new THREE.PointLight(0xffffff, 1, 1000);
+            light.position.set(0, 100, 200);
+            scene.add(light);
+
+            // 动态点光源
+            dynamicLight = new THREE.PointLight(0x00ffff, 2, 300);
+            dynamicLight.position.set(0, 0, 100);
+            scene.add(dynamicLight);
+
+            // 动态球体2（更炫酷）
+            sphere2Group = new THREE.Group();
+            scene.add(sphere2Group);
+            sphere2Geometry = new THREE.SphereGeometry(18, 128, 128);
+            sphere2Material = new THREE.MeshStandardMaterial({
+                color: 0x00ffff,
+                wireframe: false,
+                metalness: 0.7,
+                roughness: 0.2,
+                emissive: 0x222244,
+                emissiveIntensity: 0.6,
+                transparent: true,
+                opacity: 0.85
+            });
+            sphere2 = new THREE.Mesh(sphere2Geometry, sphere2Material);
+            sphere2Group.add(sphere2);
+
+            // 新增：球体2外发光
+            let glowMaterial = new THREE.MeshBasicMaterial({
+                color: 0x00ffff,
+                transparent: true,
+                opacity: 0.18
+            });
+            let glowGeometry = new THREE.SphereGeometry(20, 64, 64);
+            let glow = new THREE.Mesh(glowGeometry, glowMaterial);
+            sphere2Group.add(glow);
+
+            
+            // 脉冲特效粒子初始化
+            pulseParticleGeometry = new THREE.BufferGeometry();
+            let pulsePositions = new Float32Array(pulseParticleCount * 3);
+            let pulseAlives = new Array(pulseParticleCount).fill(false);
+            let pulseVelocities = new Array(pulseParticleCount).fill([0,0,0]);
+            for (let i = 0; i < pulseParticleCount; i++) {
+                pulsePositions[i * 3] = 0;
+                pulsePositions[i * 3 + 1] = 0;
+                pulsePositions[i * 3 + 2] = 0;
+                pulseParticles.push({
+                    alive: false,
+                    velocity: new THREE.Vector3(),
+                    life: 0
+                });
+            }
+            pulseParticleGeometry.setAttribute('position', new THREE.BufferAttribute(pulsePositions, 3));
+            pulseParticleMaterial = new THREE.PointsMaterial({
+                color: 0xffffff,
+                size:1,
+                transparent: true,
+                opacity: 0.4,
+                blending: THREE.AdditiveBlending
+            });
+            pulsePoints = new THREE.Points(pulseParticleGeometry, pulseParticleMaterial);
+            scene.add(pulsePoints);
+
+
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // 初始化音频分析
+        function initAudio(arrayBuffer) {
+            if (audioCtx) audioCtx.close();
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            audio = audioCtx.createBufferSource();
+            audioCtx.decodeAudioData(arrayBuffer, buffer => {
+                audio.buffer = buffer;
+                analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 128;
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                audio.connect(analyser);
+                analyser.connect(audioCtx.destination);
+                audio.start(0);
+                animate();
+            });
+        }
+
+        // 动画循环
+        function animate() {
+            requestAnimationFrame(animate);
+            if (analyser) {
+                analyser.getByteFrequencyData(dataArray);
+                // 柱状体环形立体效果
+                for (let i = 0; i < bars.length; i++) {
+                    bars[i].visible = showBars;
+                    let scale = (dataArray[i] || 1) / 16;
+                    bars[i].scale.y = Math.max(scale, 0.1);
+                    bars[i].position.y = bars[i].scale.y * 8; // 柱体高度偏移
+                    bars[i].material.color.setHSL(scale/8, 1, 0.5);
+                }
+                // 新增：整体旋转
+                if (showBars) {
+                    barRingGroup.rotation.y += 0.008;
+                    barRingGroup.rotation.x = Math.sin(Date.now() * 0.0005) * 0.3;
+                }
+                // 粒子系统
+                particles.visible = showParticles;
+                let positions = particles.geometry.attributes.position.array;
+                for (let i = 0; i < positions.length / 3; i++) {
+                    let freq = dataArray[i % dataArray.length] / 255;
+                    positions[i * 3 + 2] = Math.sin(Date.now() * 0.001 + i) * freq * 20;
+                }
+                particles.geometry.attributes.position.needsUpdate = true;
+                particles.material.size = 0.1 + Math.max(...dataArray) / 200;
+                particles.material.color.setHSL(Math.max(...dataArray) / 255, 1, 0.6);
+
+                // 球体几何变形
+                sphere.visible = showSphere;
+                for (let i = 0; i < sphereGeometry.attributes.position.count; i++) {
+                    let vertex = sphereGeometry.attributes.position;
+                    let orig = sphereGeometry.parameters.radius;
+                    let freq = dataArray[i % dataArray.length] / 255;
+                    let offset = 1 + freq * 0.6 * Math.sin(Date.now() * 0.002 + i);
+                    let x = vertex.getX(i);
+                    let y = vertex.getY(i);
+                    let z = vertex.getZ(i);
+                    let len = Math.sqrt(x*x + y*y + z*z);
+                    vertex.setXYZ(i, x/len*orig*offset, y/len*orig*offset, z/len*orig*offset);
+                }
+                sphereGeometry.attributes.position.needsUpdate = true;
+
+                // 动态点光源随音频旋转
+                let t = Date.now() * 0.001;
+                let r = 60 + Math.max(...dataArray) / 4;
+                dynamicLight.position.x = Math.cos(t) * r;
+                dynamicLight.position.y = Math.sin(t) * r;
+                dynamicLight.color.setHSL((Math.max(...dataArray) / 255), 1, 0.5);
+
+                // 动态球体2特效
+                sphere2Group.visible = showSphere2;
+                if (showSphere2) {
+                    // 球体自转
+                    sphere2Group.rotation.y += 0.012;
+                    sphere2Group.rotation.x += 0.006;
+
+                    // 球体表面动态波浪变形
+                    let pos = sphere2Geometry.attributes.position;
+                    let time = Date.now() * 0.002;
+                    for (let i = 0; i < pos.count; i++) {
+                        let orig = sphere2Geometry.parameters.radius;
+                        let x = pos.getX(i);
+                        let y = pos.getY(i);
+                        let z = pos.getZ(i);
+                        let len = Math.sqrt(x*x + y*y + z*z);
+                        // 音频驱动的波浪
+                        let freq = dataArray[i % dataArray.length] / 255;
+                        let wave = Math.sin(i * 0.15 + time + freq * 6) * (0.8 + freq * 1.8);
+                        let offset = 1 + freq * 0.7 + wave * 0.08;
+                        pos.setXYZ(i, x/len*orig*offset, y/len*orig*offset, z/len*orig*offset);
+                    }
+                    pos.needsUpdate = true;
+
+                    // 球体颜色和发光随音频变化
+                    let maxFreq = Math.max(...dataArray) / 255;
+                    sphere2Material.color.setHSL(0.5 + maxFreq * 0.5, 1, 0.5 - maxFreq * 0.2);
+                    sphere2Material.emissive.setHSL(0.6 + maxFreq * 0.3, 1, 0.4 + maxFreq * 0.3);
+                }
+            }
+            // // 粒子喷发
+            // if (burstParticles) burstParticles.visible = showBurst;
+            // // 多层球体
+            // if (multiSpheres && multiSpheres.length) {
+            //     for (let l = 0; l < multiSpheres.length; l++) {
+            //         multiSpheres[l].mesh.visible = showMultiSpheres;
+            //     }
+            // }
+            // 脉冲特效粒子发射与更新
+            pulsePoints.visible = showPulse;
+            if (showPulse) {
+                let positions = pulseParticleGeometry.attributes.position.array;
+                let maxFreq = Math.max(...dataArray) / 255;
+                // 音乐脉冲强时发射新粒子
+                let emitCount = Math.floor(maxFreq * 12);
+                for (let e = 0; e < emitCount; e++) {
+                    // 找到未激活的粒子
+                    for (let i = 0; i < pulseParticles.length; i++) {
+                        if (!pulseParticles[i].alive) {
+                            // 随机方向
+                            let theta = Math.random() * Math.PI * 2;
+                            let phi = Math.acos(2 * Math.random() - 1);
+                            // 速度调整：基础速度更低，音频影响更柔和
+                            let speed = 0.5 + Math.random() * 1.2 + maxFreq * 2.5;
+                            pulseParticles[i].velocity.set(
+                                Math.sin(phi) * Math.cos(theta) * speed,
+                                Math.sin(phi) * Math.sin(theta) * speed,
+                                Math.cos(phi) * speed
+                            );
+                            positions[i * 3] = 0;
+                            positions[i * 3 + 1] = 0;
+                            positions[i * 3 + 2] = 0;
+                            pulseParticles[i].alive = true;
+                            pulseParticles[i].life = 0;
+                            break;
+                        }
+                    }
+                }
+                // 更新所有粒子
+                for (let i = 0; i < pulseParticles.length; i++) {
+                    if (pulseParticles[i].alive) {
+                        positions[i * 3] += pulseParticles[i].velocity.x;
+                        positions[i * 3 + 1] += pulseParticles[i].velocity.y;
+                        positions[i * 3 + 2] += pulseParticles[i].velocity.z;
+                        pulseParticles[i].life++;
+                        // 超出范围或寿命即消失
+                        let len = Math.sqrt(
+                            positions[i * 3] * positions[i * 3] +
+                            positions[i * 3 + 1] * positions[i * 3 + 1] +
+                            positions[i * 3 + 2] * positions[i * 3 + 2]
+                        );
+                        if (len > 300 || pulseParticles[i].life > 60) {
+                            pulseParticles[i].alive = false;
+                            positions[i * 3] = 0;
+                            positions[i * 3 + 1] = 0;
+                            positions[i * 3 + 2] = 0;
+                        }
+                    }
+                }
+                pulseParticleGeometry.attributes.position.needsUpdate = true;
+                pulseParticleMaterial.color.setHSL(0.1 + maxFreq * 0.8, 1, 0.7);
+            }
+            renderer.render(scene, camera);
+        }
+
+        // 文件上传处理
+        document.getElementById('upload').addEventListener('change', function(e) {
+            let file = e.target.files[0];
+            if (file) {
+                let reader = new FileReader();
+                reader.onload = function(ev) {
+                    initAudio(ev.target.result);
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        });
+
+        // 新增：菜单交互逻辑
+        document.getElementById('toggleMenu').onclick = function() {
+            let menu = document.getElementById('menu');
+            menu.classList.toggle('expanded');
+        };
+        document.getElementById('toggleBars').onchange = function(e) {
+            showBars = e.target.checked;
+        };
+        document.getElementById('toggleParticles').onchange = function(e) {
+            showParticles = e.target.checked;
+        };
+        document.getElementById('toggleSphere').onchange = function(e) {
+            showSphere = e.target.checked;
+        };
+
+        // 新增：菜单动态球体2开关
+        // 在菜单HTML options中插入
+        // <label><input type="checkbox" id="toggleSphere2" checked> 动态球体2</label>
+        document.getElementById('toggleSphere2').onchange = function(e) {
+            showSphere2 = e.target.checked;
+        };
+        document.getElementById('toggleBurst').onchange = function(e) {
+            showBurst = e.target.checked;
+        };
+        document.getElementById('toggleMultiSpheres').onchange = function(e) {
+            showMultiSpheres = e.target.checked;
+        };
+
+        document.getElementById('togglePulse').onchange = function(e) {
+            showPulse = e.target.checked;
+        };
+
+        initThree();
+    </script>
+</body>
+</html>
